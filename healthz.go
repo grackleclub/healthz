@@ -3,6 +3,7 @@ package healthz
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 )
 
 type Healthz struct {
+	Status  int    `json:"status"`
 	Uptime  string `json:"uptime"`
 	Version string `json:"version"`
 	CPU     string `json:"cpu"`
@@ -20,11 +22,41 @@ type Healthz struct {
 	Disk    string `json:"disk"`
 }
 
-var uptime time.Time
+var (
+	uptime time.Time
+)
 
 func init() {
 	uptime = time.Now()
 	slog.Warn("Healthz init starting", "started", uptime)
+}
+
+// Ping sends a GET request to the provided healthz URL,
+// returning a healthz object
+func Ping(url string) (Healthz, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return Healthz{}, fmt.Errorf("unable to create new healthz request: %w", err)
+	}
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return Healthz{}, fmt.Errorf("unable to perform healthz request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return Healthz{}, fmt.Errorf("unable to read healthz response: %w", err)
+	}
+
+	h := Healthz{}
+	err = json.Unmarshal(body, &h)
+	if err != nil {
+		return Healthz{}, fmt.Errorf("unable to unmarshal healthz response: %w", err)
+	}
+	h.Status = resp.StatusCode
+	return h, nil
 }
 
 // Respond is an http.HandlerFunc that returns a JSON response with
@@ -108,7 +140,7 @@ func DISK() (float64, error) {
 	}
 
 	// Calculate the percentage of disk used
-	percentDiskUsed := (float64(used) / float64(total)) * 100
+	percentDiskUsed := (float64(used) / float64(total))
 	return percentDiskUsed, nil
 }
 
@@ -185,9 +217,31 @@ func CPU() (float64, error) {
 			}
 
 			total := user + nice + system + idle
-			usage := float64(user+nice+system) / float64(total) * 100
+			usage := float64(user+nice+system) / float64(total)
 			return usage, nil
 		}
 	}
 	return 0, fmt.Errorf("could not find CPU usage in /proc/stat")
+}
+
+// PingWithRetry sends a GET request to the provided healthz URL,
+// retrying up to maxRetries times with exponential backoff
+func PingWithRetry(url string, maxRetries int) (Healthz, error) {
+	wait := 500 * time.Millisecond
+	for i := 0; i < maxRetries; i++ {
+		wait *= 2
+		h, err := Ping(url)
+		if err == nil {
+			return h, nil
+		}
+		slog.Warn("healthz ping failed",
+			"attempt", i,
+			"error", err,
+		)
+		time.Sleep(wait)
+
+	}
+	return Healthz{}, fmt.Errorf(
+		"unable to ping healthz after %d retries", maxRetries,
+	)
 }
