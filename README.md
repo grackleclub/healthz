@@ -50,7 +50,7 @@ Use built in methods `Ping()` and `PingWithRetry()` to check health:
 ```go
 var (
     // override initial wait value for first retry
-	healthz.InitialWait = 500 * time.Millisecond
+    healthz.InitialWait = 500 * time.Millisecond
     // set version or config revision to be returned,
     // else an empty string will be returned
     healthz.Version = "v1.2.3-abcde"
