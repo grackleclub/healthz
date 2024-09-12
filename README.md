@@ -9,7 +9,9 @@ Basic handler and client for returning health and metrics. Responses are current
 > [!WARNING]
 > Only Linux machines are supported. 🐧
 
-## usage
+## examples
+
+### server
 First, register the `healthz.Respond` handler with your application:
 ```go
 package main
@@ -27,11 +29,15 @@ func main() {
 }
 ```
 
-Then, check the status of the application with a simple check:
+### checker
+Use built in methods `Ping()` and `PingWithRetry()` to check health:
 ```go
 var (
     // override initial wait value for first retry
 	healthz.InitialWait = 500 * time.Millisecond
+    // set version or config revision to be returned,
+    // else an empty string will be returned
+    healthz.Version = "v1.2.3-abcde"
 )
 
 url := "https://foo.bar.com/healthz"
