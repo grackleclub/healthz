@@ -45,7 +45,7 @@ func main() {
 }
 ```
 
-### checker
+### client
 Use built in methods `Ping()` and `PingWithRetry()` to check health:
 ```go
 var (
