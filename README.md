@@ -15,13 +15,13 @@ The `Healthz` struct can be shared between server and client, using json across 
 // Healthz is a shared object between client and server
 // to check http status and basic metrics
 type Healthz struct {
-	Time    int    `json:"time"`    // unix timestamp
-	Status  int    `json:"status"`  // http status code
-	Uptime  string `json:"uptime"`  // time since last restart
-	Version string `json:"version"` // set by the server
-	CPU     string `json:"cpu"`     // percent (between 0 and 1)
-	Memory  string `json:"memory"`  // percent
-	Disk    string `json:"disk"`    // percent
+    Time    int    `json:"time"`    // unix timestamp
+    Status  int    `json:"status"`  // http status code
+    Uptime  string `json:"uptime"`  // time since last restart
+    Version string `json:"version"` // set by the server
+    CPU     string `json:"cpu"`     // percent (between 0 and 1)
+    Memory  string `json:"memory"`  // percent
+    Disk    string `json:"disk"`    // percent
 }
 ```
 
