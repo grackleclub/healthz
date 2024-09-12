@@ -6,6 +6,9 @@ health check tools
 
 Basic handler and client for returning health and metrics. Responses are currently formatted as JSON. Future work may entail protobuf.
 
+> [!WARNING]
+> Linux only!
+
 ## usage
 First, register the `healthz.Respond` handler with your application:
 ```go
