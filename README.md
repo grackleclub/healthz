@@ -29,7 +29,12 @@ func main() {
 
 Then, check the status of the application with a simple check:
 ```go
-url := "https://foo.bar.com/healthz
+var (
+    // override initial wait value for first retry
+	healthz.InitialWait = 500 * time.Millisecond
+)
+
+url := "https://foo.bar.com/healthz"
 maxRetries := 8
 
 health, err := PingWithRetry(url, maxRetries)

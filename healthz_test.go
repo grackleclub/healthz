@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,7 +34,9 @@ func TestRespond(t *testing.T) {
 }
 
 func TestPing(t *testing.T) {
+	now := time.Now().Unix()
 	health := Healthz{
+		Time:    int(now),
 		Status:  200,
 		Uptime:  "1m",
 		Version: "v1.2.3-abcd",
@@ -59,4 +62,8 @@ func TestPing(t *testing.T) {
 	require.Equal(t, h, health)
 	t.Logf("Ping check with retries completed: %+v", h)
 
+	// turn h.Time into a time.Time object
+	newTime := time.Unix(int64(h.Time), 0)
+	t.Logf("time: %v", newTime)
+	require.Equal(t, now, newTime.Unix())
 }

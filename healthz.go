@@ -13,50 +13,30 @@ import (
 	"time"
 )
 
+// Healthz is a shared object between client and server
+// to check http status and basic metrics
 type Healthz struct {
-	Status  int    `json:"status"`
-	Uptime  string `json:"uptime"`
+	Time    int    `json:"time"`   // unix timestamp
+	Status  int    `json:"status"` // http status code
+	Uptime  string `json:"uptime"` // time since last restart
 	Version string `json:"version"`
-	CPU     string `json:"cpu"`
-	Memory  string `json:"memory"`
-	Disk    string `json:"disk"`
+	CPU     string `json:"cpu"`    // percent (between 0 and 1)
+	Memory  string `json:"memory"` // percent
+	Disk    string `json:"disk"`   // percent
 }
 
 var (
-	uptime time.Time
+	Version     string                   // version of the server
+	InitialWait = 500 * time.Millisecond // length of first wait (2x for subsequent)
+	uptime      time.Time                // time since the server started
 )
 
 func init() {
 	uptime = time.Now()
-	slog.Warn("Healthz init starting", "started", uptime)
-}
-
-// Ping sends a GET request to the provided healthz URL,
-// returning a healthz object
-func Ping(url string) (Healthz, error) {
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return Healthz{}, fmt.Errorf("unable to create new healthz request: %w", err)
-	}
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return Healthz{}, fmt.Errorf("unable to perform healthz request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return Healthz{}, fmt.Errorf("unable to read healthz response: %w", err)
-	}
-
-	h := Healthz{}
-	err = json.Unmarshal(body, &h)
-	if err != nil {
-		return Healthz{}, fmt.Errorf("unable to unmarshal healthz response: %w", err)
-	}
-	h.Status = resp.StatusCode
-	return h, nil
+	slog.Debug("Healthz init starting",
+		"uptimeBegins", uptime,
+		"initialWait", InitialWait,
+	)
 }
 
 // Respond is an http.HandlerFunc that returns a JSON response with
@@ -90,8 +70,9 @@ func Respond(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h := Healthz{
+		Time:    int(time.Now().Unix()),
 		Uptime:  uptime.String(),
-		Version: "TODO",
+		Version: Version,
 		CPU:     fmt.Sprintf("%.2f", cpu),
 		Memory:  fmt.Sprintf("%.2f", memory),
 		Disk:    fmt.Sprintf("%.2f", disk),
@@ -99,6 +80,7 @@ func Respond(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	slog.Info("responding to healthz",
+		"time", h.Time,
 		"uptime", h.Uptime,
 		"version", h.Version,
 		"cpu", h.CPU,
@@ -114,7 +96,57 @@ func Respond(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(h)
 }
 
-// DISK returns the percentage of disk used by the system
+// Ping sends a GET request to the provided healthz URL,
+// returning a healthz object
+func Ping(url string) (Healthz, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return Healthz{}, fmt.Errorf("unable to create new healthz request: %w", err)
+	}
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return Healthz{}, fmt.Errorf("unable to perform healthz request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return Healthz{}, fmt.Errorf("unable to read healthz response: %w", err)
+	}
+
+	h := Healthz{}
+	err = json.Unmarshal(body, &h)
+	if err != nil {
+		return Healthz{}, fmt.Errorf("unable to unmarshal healthz response: %w", err)
+	}
+	h.Status = resp.StatusCode
+	return h, nil
+}
+
+// PingWithRetry sends a GET request to the provided healthz URL,
+// retrying up to maxRetries times with exponential backoff
+func PingWithRetry(url string, maxRetries int) (Healthz, error) {
+	wait := InitialWait
+	for i := 0; i < maxRetries; i++ {
+		wait *= 2
+		h, err := Ping(url)
+		if err == nil {
+			return h, nil
+		}
+		slog.Warn("healthz ping failed",
+			"attempt", i,
+			"error", err,
+		)
+		time.Sleep(wait)
+
+	}
+	return Healthz{}, fmt.Errorf(
+		"unable to ping healthz after %d retries", maxRetries,
+	)
+}
+
+// DISK returns the percentage of disk space in use
 func DISK() (float64, error) {
 	var stat syscall.Statfs_t
 
@@ -222,26 +254,4 @@ func CPU() (float64, error) {
 		}
 	}
 	return 0, fmt.Errorf("could not find CPU usage in /proc/stat")
-}
-
-// PingWithRetry sends a GET request to the provided healthz URL,
-// retrying up to maxRetries times with exponential backoff
-func PingWithRetry(url string, maxRetries int) (Healthz, error) {
-	wait := 500 * time.Millisecond
-	for i := 0; i < maxRetries; i++ {
-		wait *= 2
-		h, err := Ping(url)
-		if err == nil {
-			return h, nil
-		}
-		slog.Warn("healthz ping failed",
-			"attempt", i,
-			"error", err,
-		)
-		time.Sleep(wait)
-
-	}
-	return Healthz{}, fmt.Errorf(
-		"unable to ping healthz after %d retries", maxRetries,
-	)
 }
