@@ -79,7 +79,7 @@ func Respond(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	slog.Info("responding to healthz",
+	slog.Debug("responding to healthz",
 		"time", h.Time,
 		"uptime", h.Uptime,
 		"version", h.Version,
