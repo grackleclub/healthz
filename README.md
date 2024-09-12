@@ -10,7 +10,7 @@ Basic handler and client for returning health and metrics. Responses are current
 > Only Linux machines are supported. 🐧
 
 ## shared object
-The `Healthz` struct can be shared between server and client, using json across the wire. An http `404 Not Found` error will be returned if CPU, Memory, or Disc cannot be found.
+The `Healthz` struct can be shared between server and client, using json across the wire. An http `404 Not Found` error will be returned if CPU, Memory, or Disk usage retrieval fails.
 ```go
 // Healthz is a shared object between client and server
 // to check http status and basic metrics
