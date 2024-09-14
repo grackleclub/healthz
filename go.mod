@@ -1,4 +1,4 @@
-module github.com/ddbgio/healthz
+module github.com/grackleclub/healthz
 
 go 1.23.0
 
