@@ -4,10 +4,7 @@ health check tools
 
 ![workflow](https://github.com/ddbgio/healthz/actions/workflows/test.yml/badge.svg)
 
-Basic handler and client for returning health and metrics. Responses are currently formatted as JSON. Future work may entail protobuf.
-
-> [!WARNING]
-> Only Linux machines are supported. 🐧
+Basic handler and client for returning health and metrics. Responses are currently formatted as JSON. Future work may entail protobuf. Linux only. 🐧
 
 ## shared object
 The `Healthz` struct can be shared between server and client, using json across the wire. An http `404 Not Found` error will be returned if CPU, Memory, or Disk usage retrieval fails.
