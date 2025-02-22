@@ -6,51 +6,56 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
-	"strconv"
-	"strings"
-	"syscall"
+	"testing"
 	"time"
 )
 
 // Healthz is a shared object between client and server
 // to check http status and basic metrics
 type Healthz struct {
-	Time    int    `json:"time"`    // unix timestamp
-	Status  int    `json:"status"`  // http status code
-	Uptime  string `json:"uptime"`  // time since last restart
-	Version string `json:"version"` // set by the server
-	CPU     string `json:"cpu"`     // percent (between 0 and 1)
-	Memory  string `json:"memory"`  // percent
-	Disk    string `json:"disk"`    // percent
+	Time    int     `json:"time"`    // unix timestamp
+	Status  int     `json:"status"`  // http status code
+	Version string  `json:"version"` // version of the service
+	Uptime  string  `json:"uptime"`  // minutes since last init
+	CPU     string  `json:"cpu"`     // percent (between 0 and 1)
+	Memory  string  `json:"memory"`  // percent
+	Disk    string  `json:"disk"`    // percent
+	Load1   string  `json:"load1"`   // 1 minute load average
+	Load5   string  `json:"load5"`   // 5 minute load average
+	Load15  string  `json:"load15"`  // 15 minute load average
+	Errors  []error `json:"errors"`  // list of errors encountered
 }
 
 var (
-	Version     string                   // version of the server
-	InitialWait = 500 * time.Millisecond // length of first wait (2x for subsequent)
-	uptime      time.Time                // time since the server started
+	initTime  time.Time                // time since the server started
+	Version   string                   // user-defined version which can be set by service
+	retryWait = 500 * time.Millisecond // length of first wait (2x for all subsequent)
 )
 
 func init() {
-	uptime = time.Now()
+	initTime = time.Now()
+	if testing.Testing() {
+		slog.SetLogLoggerLevel(slog.LevelDebug)
+	}
 	slog.Debug("Healthz init starting",
-		"uptimeBegins", uptime,
-		"initialWait", InitialWait,
+		"initTime", initTime,
+		"retryWait", retryWait,
 	)
 }
 
-// Respond is an http.HandlerFunc that returns a JSON response with
-// health information and basic metrics
+// Respond is an http.HandlerFunc that returns a JSON response unmarshalable
+// into a Healthz object. A failure of any field will return a partial response
+// and a 404 status code for the request. Service status is reflected in Healthz.Status
 func Respond(w http.ResponseWriter, r *http.Request) {
-	uptime := time.Since(uptime)
+	uptime := time.Since(initTime)
 	cpu, err := CPU()
-	var missing bool
+	var errors []error
 	if err != nil {
 		slog.Error("healthz metrics check failed",
 			"target", "cpu",
 			"error", err,
 		)
-		missing = true
+		errors = append(errors, fmt.Errorf("cpu fetch failed"))
 	}
 	memory, err := MEM()
 	if err != nil {
@@ -58,7 +63,7 @@ func Respond(w http.ResponseWriter, r *http.Request) {
 			"target", "memory",
 			"error", err,
 		)
-		missing = true
+		errors = append(errors, fmt.Errorf("memory fetch failed"))
 	}
 	disk, err := DISK()
 	if err != nil {
@@ -66,40 +71,50 @@ func Respond(w http.ResponseWriter, r *http.Request) {
 			"target", "disk",
 			"error", err,
 		)
-		missing = true
+		errors = append(errors, fmt.Errorf("disk fetch failed"))
+	}
+	load1, load5, load15, err := Load()
+	if err != nil {
+		slog.Error("healthz metrics check failed",
+			"target", "load",
+			"error", err,
+		)
+		errors = append(errors, fmt.Errorf("load fetch failed"))
 	}
 
 	h := Healthz{
 		Time:    int(time.Now().Unix()),
-		Uptime:  uptime.String(),
+		Uptime:  fmt.Sprintf("%.2f", uptime.Minutes()),
 		Version: Version,
 		CPU:     fmt.Sprintf("%.2f", cpu),
 		Memory:  fmt.Sprintf("%.2f", memory),
 		Disk:    fmt.Sprintf("%.2f", disk),
+		Load1:   fmt.Sprintf("%.2f", load1),
+		Load5:   fmt.Sprintf("%.2f", load5),
+		Load15:  fmt.Sprintf("%.2f", load15),
+		Errors:  errors,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	slog.Debug("responding to healthz",
 		"time", h.Time,
 		"uptime", h.Uptime,
-		"version", h.Version,
 		"cpu", h.CPU,
 		"memory", h.Memory,
 		"disk", h.Disk,
+		"load1", h.Load1,
+		"load5", h.Load5,
+		"load15", h.Load15,
+		"errors", h.Errors,
 	)
 	w.Header().Set("Content-Type", "application/json")
-	if missing {
-		w.WriteHeader(http.StatusNotFound)
-	} else {
-		w.WriteHeader(http.StatusOK)
-	}
 	json.NewEncoder(w).Encode(h)
 }
 
 // Ping sends a GET request to the provided healthz URL,
 // returning a healthz object
 func Ping(url string) (Healthz, error) {
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return Healthz{}, fmt.Errorf("unable to create new healthz request: %w", err)
 	}
@@ -120,6 +135,7 @@ func Ping(url string) (Healthz, error) {
 	if err != nil {
 		return Healthz{}, fmt.Errorf("unable to unmarshal healthz response: %w", err)
 	}
+	slog.Warn("healthz ping response", "status", resp.StatusCode)
 	h.Status = resp.StatusCode
 	return h, nil
 }
@@ -127,131 +143,32 @@ func Ping(url string) (Healthz, error) {
 // PingWithRetry sends a GET request to the provided healthz URL,
 // retrying up to maxRetries times with exponential backoff
 func PingWithRetry(url string, maxRetries int) (Healthz, error) {
-	wait := InitialWait
+	wait := retryWait
 	for i := 0; i < maxRetries; i++ {
 		wait *= 2
 		h, err := Ping(url)
-		if err == nil {
+		if err == nil && h.Status == http.StatusOK {
 			return h, nil
 		}
-		slog.Warn("healthz ping failed",
-			"attempt", i,
-			"error", err,
-		)
+		if err != nil {
+			slog.Info("healthz ping failed",
+				"url", url,
+				"attempt", i+1,
+				"attemptMax", maxRetries,
+				"error", err,
+			)
+		}
+		if h.Status != http.StatusOK {
+			slog.Info("healthz ping returned non-200 status",
+				"url", url,
+				"attempt", i+1,
+				"attemptMax", maxRetries,
+				"status", h.Status,
+			)
+		}
 		time.Sleep(wait)
-
 	}
 	return Healthz{}, fmt.Errorf(
 		"unable to ping healthz after %d retries", maxRetries,
 	)
-}
-
-// DISK returns the percentage of disk space in use
-func DISK() (float64, error) {
-	var stat syscall.Statfs_t
-
-	wd, err := os.Getwd()
-	if err != nil {
-		return 0, fmt.Errorf("unable to get current working directory: %w", err)
-	}
-
-	err = syscall.Statfs(wd, &stat)
-	if err != nil {
-		return 0, fmt.Errorf("unable to get file system statistics: %w", err)
-	}
-
-	// Total blocks * size per block = total size
-	total := stat.Blocks * uint64(stat.Bsize)
-	// Free blocks * size per block = free size
-	free := stat.Bfree * uint64(stat.Bsize)
-	// Used size = total size - free size
-	used := total - free
-
-	if total == 0 {
-		return 0, fmt.Errorf("total disk space is zero, invalid data")
-	}
-
-	// Calculate the percentage of disk used
-	percentDiskUsed := (float64(used) / float64(total))
-	return percentDiskUsed, nil
-}
-
-// MEM returns the percentage of memory used by the system
-func MEM() (float64, error) {
-	data, err := os.ReadFile("/proc/self/status")
-	if err != nil {
-		return 0, fmt.Errorf("unable to read /proc/self/status: %w", err)
-	}
-
-	var totalMemory, rssMemory uint64
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "VmRSS:") {
-			fields := strings.Fields(line)
-			if len(fields) < 2 {
-				return 0, fmt.Errorf("invalid format in /proc/self/status, expected >=2, got %d", len(fields))
-			}
-			rssMemory, err = strconv.ParseUint(fields[1], 10, 64)
-			if err != nil {
-				return 0, fmt.Errorf("parse failure reading VmRSS field: %w", err)
-			}
-		}
-		if strings.HasPrefix(line, "VmSize:") {
-			fields := strings.Fields(line)
-			if len(fields) < 2 {
-				return 0, fmt.Errorf("invalid format in /proc/self/status, expected >=2, got %d", len(fields))
-			}
-			totalMemory, err = strconv.ParseUint(fields[1], 10, 64)
-			if err != nil {
-				return 0, fmt.Errorf("parse failure reading VmSize field: %w", err)
-			}
-		}
-	}
-
-	if totalMemory == 0 {
-		return 0, fmt.Errorf("total memory is zero, invalid data")
-	}
-
-	// Calculate the percentage of memory used
-	percentMemoryUsed := (float64(rssMemory) / float64(totalMemory)) * 100
-	return percentMemoryUsed, nil
-}
-
-// CPU returns the percentage of CPU used by the system
-func CPU() (float64, error) {
-	data, err := os.ReadFile("/proc/stat")
-	if err != nil {
-		return 0, fmt.Errorf("unable to read /proc/stat: %w", err)
-	}
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "cpu ") {
-			fields := strings.Fields(line)
-			if len(fields) < 8 {
-				return 0, fmt.Errorf("invalid format in /proc/stat, expected >=8, got %d", len(fields))
-			}
-
-			user, err := strconv.ParseUint(fields[1], 10, 64)
-			if err != nil {
-				return 0, fmt.Errorf("parse failure reading user field: %w", err)
-			}
-			nice, err := strconv.ParseUint(fields[2], 10, 64)
-			if err != nil {
-				return 0, fmt.Errorf("parse failure reading nice field: %w", err)
-			}
-			system, err := strconv.ParseUint(fields[3], 10, 64)
-			if err != nil {
-				return 0, fmt.Errorf("parse failure reading system field: %w", err)
-			}
-			idle, err := strconv.ParseUint(fields[4], 10, 64)
-			if err != nil {
-				return 0, fmt.Errorf("parse failure reading idle field: %w", err)
-			}
-
-			total := user + nice + system + idle
-			usage := float64(user+nice+system) / float64(total)
-			return usage, nil
-		}
-	}
-	return 0, fmt.Errorf("could not find CPU usage in /proc/stat")
 }
