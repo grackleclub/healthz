@@ -7,18 +7,22 @@ health check tools
 Basic handler and client for returning health and metrics. Responses are currently formatted as JSON. Future work may entail protobuf. Linux only. 🐧
 
 ## shared object
-The `Healthz` struct can be shared between server and client, using json across the wire. An http `404 Not Found` error will be returned if CPU, Memory, or Disk usage retrieval fails.
+The `Healthz` struct can be shared between server and client, using json across the wire. The `Errors` object may contain field lookup failures from the server, or information retries added by `Ping()`.
 ```go
 // Healthz is a shared object between client and server
 // to check http status and basic metrics
 type Healthz struct {
-    Time    int    `json:"time"`    // unix timestamp
-    Status  int    `json:"status"`  // http status code
-    Uptime  string `json:"uptime"`  // time since last restart
-    Version string `json:"version"` // set by the server
-    CPU     string `json:"cpu"`     // percent (between 0 and 1)
-    Memory  string `json:"memory"`  // percent
-    Disk    string `json:"disk"`    // percent
+	Time    int     `json:"time"`    // unix timestamp
+	Status  int     `json:"status"`  // http status code
+	Version string  `json:"version"` // version of the service
+	Uptime  string  `json:"uptime"`  // minutes since last init
+	CPU     string  `json:"cpu"`     // percent (between 0 and 1)
+	Memory  string  `json:"memory"`  // percent
+	Disk    string  `json:"disk"`    // percent
+	Load1   string  `json:"load1"`   // 1 minute load average
+	Load5   string  `json:"load5"`   // 5 minute load average
+	Load15  string  `json:"load15"`  // 15 minute load average
+	Errors  []error `json:"errors"`  // list of errors encountered
 }
 ```
 
@@ -53,7 +57,7 @@ var (
     healthz.Version = "v1.2.3-abcde"
 )
 
-url := "https://foo.bar.com/healthz"
+url := "https://foo.bar.com:8888/healthz"
 maxRetries := 8
 
 health, err := PingWithRetry(url, maxRetries)
