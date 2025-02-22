@@ -148,6 +148,9 @@ func PingWithRetry(url string, maxRetries int) (Healthz, error) {
 		wait *= 2
 		h, err := Ping(url)
 		if err == nil && h.Status == http.StatusOK {
+			if i > 0 {
+				h.Errors = append(h.Errors, fmt.Errorf("required retries: %d", i))
+			}
 			return h, nil
 		}
 		if err != nil {
