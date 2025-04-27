@@ -144,7 +144,7 @@ func Ping(url string) (Healthz, error) {
 // retrying up to maxRetries times with exponential backoff
 func PingWithRetry(url string, maxRetries int) (Healthz, error) {
 	wait := retryWait
-	for i := 0; i < maxRetries; i++ {
+	for i := range maxRetries {
 		wait *= 2
 		h, err := Ping(url)
 		if err == nil && h.Status == http.StatusOK {
