@@ -16,8 +16,8 @@ type Healthz struct {
 	Time    int     `json:"time"`    // unix timestamp
 	Status  int     `json:"status"`  // http status code
 	Version string  `json:"version"` // version of the service
-	Uptime  string  `json:"uptime"`  // minutes since last init
 	CPU     string  `json:"cpu"`     // percent (between 0 and 1)
+	Uptime  string  `json:"uptime"`  // minutes since last init
 	Memory  string  `json:"memory"`  // percent
 	Disk    string  `json:"disk"`    // percent
 	Load1   string  `json:"load1"`   // 1 minute load average
@@ -65,6 +65,7 @@ func Respond(w http.ResponseWriter, r *http.Request) {
 		)
 		errors = append(errors, fmt.Errorf("memory fetch failed"))
 	}
+
 	disk, err := DISK()
 	if err != nil {
 		slog.Error("healthz metrics check failed",
